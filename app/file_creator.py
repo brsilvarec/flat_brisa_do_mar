@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 import pypandoc
 import logging
 from pydantic import BaseModel, Field, ValidationError
@@ -56,6 +57,41 @@ def load_config(config_path: str) -> MappedItems:
         logger.error(f"Failed to load configuration file: {e}")
         raise
 
+# Create a function to override guest, start and end dates
+def override_config(mapped_items: MappedItems, guest: str = None, start: str = None, end: str = None) -> MappedItems:
+    """
+    Override specific fields in MappedItems.
+
+    Args:
+        mapped_items (MappedItems): Original configuration data
+        guest (str, optional): New guest name
+        start (str, optional): New start date
+        end (str, optional): New end date
+    Returns:
+        MappedItems: Updated configuration data
+    """
+    updated_data = mapped_items.model_dump()
+
+    if guest:
+        updated_data['guest'] = guest
+        logger.info(f"Overriding guest name to: {guest}")
+    if start:
+        updated_data['start'] = start
+        logger.info(f"Overriding start date to: {start}")
+    if end:
+        updated_data['end'] = end
+        logger.info(f"Overriding end date to: {end}")
+    
+    # Overwrite nights based on new start and end dates if both are provided
+    if start and end:
+        start_date = datetime.strptime(start, "%Y-%m-%d")
+        end_date = datetime.strptime(end, "%Y-%m-%d")
+        nights = (end_date - start_date).days
+        updated_data['nights'] = str(nights)
+        logger.info(f"Updated nights to: {nights}")
+
+    return MappedItems.model_validate(updated_data)
+
 def docx_to_html(docx_path: str) -> str:
     """
     Convert a DOCX file to HTML string using pypandoc.
@@ -81,7 +117,7 @@ def docx_to_html(docx_path: str) -> str:
         # Convert DOCX to HTML with image extraction
         extra_args = ['--extract-media', 'media']
         html_content = pypandoc.convert_file(
-            docx_path, 
+            docx_path,
             'html',
             extra_args=extra_args
         )
@@ -126,43 +162,43 @@ def replace_placeholders(html_content: str, mapped_items: MappedItems) -> str:
 def html_to_docx(html_content: str, output_path: str, template_path: str = None) -> None:
     """
     Convert HTML content back to DOCX file using pypandoc, preserving images.
-    
+
     Args:
         html_content (str): The processed HTML content
         output_path (str): Path where to save the output DOCX file
         template_path (str, optional): Path to original DOCX template for styling
-        
+
     Raises:
         RuntimeError: If conversion fails
         FileNotFoundError: If template file doesn't exist (when provided)
     """
     logger.info(f"Starting HTML to DOCX conversion: {output_path}")
-    
+
     # Ensure output directory exists
     output_dir = os.path.dirname(output_path)
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
         logger.info(f"Created output directory: {output_dir}")
-    
+
     try:
         # Prepare extra arguments for pypandoc
         extra_args = []
-        
+
         # Use template if provided for consistent styling and structure
         if template_path:
             if not os.path.exists(template_path):
                 logger.error(f"Template file not found: {template_path}")
                 raise FileNotFoundError(f"Template file not found: {template_path}")
-            
+
             # Use reference document to preserve formatting, styles, and images
             extra_args.extend(['--reference-doc', template_path])
             logger.info(f"Using template for styling and image preservation: {template_path}")
-        
+
         # Add resource path for images
         if os.path.exists('media'):
             extra_args.extend(['--resource-path', 'media'])
             logger.info("Using media directory for image resources")
-        
+
         # Convert HTML to DOCX
         pypandoc.convert_text(
             html_content,
@@ -171,10 +207,10 @@ def html_to_docx(html_content: str, output_path: str, template_path: str = None)
             outputfile=output_path,
             extra_args=extra_args
         )
-        
+
         logger.info(f"HTML to DOCX conversion completed successfully: {output_path}")
         logger.info("Images have been preserved in the output document")
-        
+
     except Exception as e:
         logger.error(f"HTML to DOCX conversion failed: {e}")
         raise RuntimeError(f"HTML to DOCX conversion failed: {e}") from e
@@ -182,34 +218,61 @@ def html_to_docx(html_content: str, output_path: str, template_path: str = None)
 def generate_output_filename(template_path: str, mapped_items: MappedItems) -> str:
     """
     Generate output filename by appending guest suffix and start date to template name.
-    
+
     Args:
         template_path (str): Path to the original template file
         mapped_items (MappedItems): Configuration data
-        
+
     Returns:
         str: Generated output file path
     """
     # Get template path components
     template_dir = os.path.dirname(template_path)
     template_name = Path(template_path).stem
-    
+
     # Create safe guest name for filename
     safe_guest = "".join(c for c in mapped_items.guest if c.isalnum() or c in (' ', '-', '_')).strip()
     safe_guest = safe_guest.replace(' ', '_')
-    
+
     # Generate filename: template_name_guest_startdate.docx
     filename = f"{template_name}_{safe_guest}_{mapped_items.start}.docx"
-    
+
     return os.path.join(template_dir, filename)
 
-# Example usage
-if __name__ == "__main__":
+def convert_docx_with_config(config_map: MappedItems, template_path: str, output_path: str) -> None:
+    """
+    Convert DOCX template to output DOCX using configuration from JSON file.
+
+    Args:
+        config_map (MappedItems): Configuration data
+        template_path (str): Path to the DOCX template file
+        output_path (str): Path where to save the output DOCX file
+
+    Raises:
+        RuntimeError: If any conversion step fails
+    """
+    try:
+        # Convert DOCX to HTML
+        html_string = docx_to_html(template_path)
+
+        # Replace placeholders
+        final_html = replace_placeholders(html_string, config_map)
+
+        # Convert processed HTML back to DOCX
+        html_to_docx(final_html, output_path, template_path)
+
+        logger.info("Document conversion completed successfully")
+
+    except Exception as e:
+        logger.error(f"Document conversion failed: {e}")
+        raise RuntimeError(f"Document conversion failed: {e}") from e
+
+def main():
     try:
         # Enforce existing JSON configuration file
         config_path = "data/config.json"
         template_path = "data/template.docx"
-        
+
         # Load configuration
         mapped_data = load_config(config_path)
 
@@ -221,13 +284,12 @@ if __name__ == "__main__":
 
         # Generate output filename with guest suffix and start date
         output_path = generate_output_filename(template_path, mapped_data)
-        
+
         # Convert processed HTML back to DOCX using original template as reference
         html_to_docx(final_html, output_path, template_path)
 
         logger.info("Process completed successfully")
         logger.info(f"Output file saved as: {output_path}")
-
     except FileNotFoundError as e:
         logger.error(f"Required file missing: {e}")
         logger.error("Please create the required files before running the script")
@@ -235,3 +297,8 @@ if __name__ == "__main__":
         logger.error(f"Configuration validation failed: {e}")
     except Exception as e:
         logger.error(f"Error: {e}")
+
+
+# Example usage
+if __name__ == "__main__":
+    main()
