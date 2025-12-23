@@ -1,38 +1,141 @@
-import pypandoc
 import os
+import pypandoc
+import logging
+from pydantic import BaseModel, Field, ValidationError
 
-def docx_to_html(docx_path):
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+class MappedItems(BaseModel):
+    title: str = Field(..., description="Title of the document")
+    guest: str = Field(..., description="Guest name")
+    nights: str = Field(..., description="Number of nights")
+    start: str = Field(..., description="Start date")
+    end: str = Field(..., description="End date")
+    cond_name: str = Field(..., description="Condominium name")
+    flat_number: str = Field(..., description="Flat/apartment number")
+    gmaps_list: str = Field(..., description="Google Maps link")
+    pass_cond: str = Field(..., description="Condominium password")
+    pass_flat: str = Field(..., description="Flat password")
+    insta_account: str = Field(..., description="Instagram account")
+
+def load_config(config_path: str) -> MappedItems:
+    """
+    Load configuration from JSON file. File must exist.
+
+    Args:
+        config_path (str): Path to the JSON configuration file
+
+    Returns:
+        MappedItems: Instance created from JSON data
+
+    Raises:
+        FileNotFoundError: If the JSON file doesn't exist
+        ValidationError: If the JSON data is invalid
+    """
+    if not os.path.exists(config_path):
+        logger.error(f"Configuration file not found: {config_path}")
+        raise FileNotFoundError(f"Configuration file is required: {config_path}")
+
+    logger.info(f"Loading configuration from {config_path}")
+
+    try:
+        with open(config_path, 'r', encoding='utf-8') as file:
+            json_data = file.read()
+
+        mapped_data = MappedItems.model_validate_json(json_data)
+        logger.info("Configuration loaded and validated successfully")
+        return mapped_data
+
+    except ValidationError as e:
+        logger.error(f"Invalid configuration data: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Failed to load configuration file: {e}")
+        raise
+
+def docx_to_html(docx_path: str) -> str:
     """
     Convert a DOCX file to HTML string using pypandoc.
-    
+
     Args:
         docx_path (str): Path to the input DOCX file
-    
+
     Returns:
         str: HTML content as string
-    
+
     Raises:
         FileNotFoundError: If the input DOCX file doesn't exist
         RuntimeError: If pypandoc conversion fails
     """
+    logger.info(f"Starting conversion of DOCX file: {docx_path}")
+
     # Check if input file exists
     if not os.path.exists(docx_path):
+        logger.error(f"DOCX file not found: {docx_path}")
         raise FileNotFoundError(f"DOCX file not found: {docx_path}")
-    
+
     try:
         # Convert DOCX to HTML and return as string
         html_content = pypandoc.convert_file(docx_path, 'html')
+        logger.info("DOCX to HTML conversion completed successfully")
         return html_content
-    
+
     except Exception as e:
+        logger.error(f"Conversion failed: {e}")
         raise RuntimeError(f"Conversion failed: {e}") from e
+
+def replace_placeholders(html_content: str, mapped_items: MappedItems) -> str:
+    """
+    Replace placeholders in HTML content with actual values.
+
+    Args:
+        html_content (str): The HTML content containing placeholders
+        mapped_items (MappedItems): Object containing the replacement values
+
+    Returns:
+        str: HTML content with placeholders replaced
+    """
+    logger.info("Starting placeholder replacement")
+
+    # Convert to dict for easy iteration
+    replacements = {
+        f'&lt;{field}&gt;': getattr(mapped_items, field)
+        for field in mapped_items.model_dump()
+    }
+
+    result = html_content
+    replacements_made = 0
+    for placeholder, value in replacements.items():
+        if placeholder in result:
+            result = result.replace(placeholder, value)
+            replacements_made += 1
+            logger.info(f"Replaced {placeholder} with {value}")
+
+    logger.info(f"Placeholder replacement completed. Made {replacements_made} replacements.")
+    return result
 
 # Example usage
 if __name__ == "__main__":
     try:
+        # Enforce existing JSON configuration file
+        config_path = "data/config.json"
+        mapped_data = load_config(config_path)
+
+        # Convert DOCX to HTML
         html_string = docx_to_html("data/template.docx")
-        print("HTML Content:")
-        print(html_string)
-        
+
+        # Replace placeholders
+        final_html = replace_placeholders(html_string, mapped_data)
+
+        logger.info("Process completed successfully")
+        logger.info(final_html)  # For demonstration purposes
+
+    except FileNotFoundError as e:
+        logger.error(f"Required file missing: {e}")
+        logger.error("Please create the configuration file before running the script")
+    except ValidationError as e:
+        logger.error(f"Configuration validation failed: {e}")
     except Exception as e:
-        print(f"Error: {e}")
+        logger.error(f"Error: {e}")
