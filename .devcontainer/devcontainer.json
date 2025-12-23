@@ -18,7 +18,9 @@
                 "python.linting.enabled": true,
                 "python.linting.pylintEnabled": true,
                 "python.formatting.provider": "black",
-                "terminal.integrated.shell.linux": "/bin/bash"
+                "terminal.integrated.shell.linux": "/bin/bash",
+                "git.terminalAuthentication": true,
+                "github.gitAuthentication": true
             }
         }
     },

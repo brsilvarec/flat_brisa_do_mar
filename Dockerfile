@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 # Install system dependencies including pandoc
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends pandoc && \
+    apt-get install -y --no-install-recommends pandoc git && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
