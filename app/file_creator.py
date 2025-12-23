@@ -2,6 +2,7 @@ import os
 import pypandoc
 import logging
 from pydantic import BaseModel, Field, ValidationError
+from pathlib import Path
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -77,9 +78,15 @@ def docx_to_html(docx_path: str) -> str:
         raise FileNotFoundError(f"DOCX file not found: {docx_path}")
 
     try:
-        # Convert DOCX to HTML and return as string
-        html_content = pypandoc.convert_file(docx_path, 'html')
+        # Convert DOCX to HTML with image extraction
+        extra_args = ['--extract-media', 'media']
+        html_content = pypandoc.convert_file(
+            docx_path, 
+            'html',
+            extra_args=extra_args
+        )
         logger.info("DOCX to HTML conversion completed successfully")
+        logger.info("Images extracted to 'media' directory")
         return html_content
 
     except Exception as e:
@@ -116,25 +123,114 @@ def replace_placeholders(html_content: str, mapped_items: MappedItems) -> str:
     logger.info(f"Placeholder replacement completed. Made {replacements_made} replacements.")
     return result
 
+def html_to_docx(html_content: str, output_path: str, template_path: str = None) -> None:
+    """
+    Convert HTML content back to DOCX file using pypandoc, preserving images.
+    
+    Args:
+        html_content (str): The processed HTML content
+        output_path (str): Path where to save the output DOCX file
+        template_path (str, optional): Path to original DOCX template for styling
+        
+    Raises:
+        RuntimeError: If conversion fails
+        FileNotFoundError: If template file doesn't exist (when provided)
+    """
+    logger.info(f"Starting HTML to DOCX conversion: {output_path}")
+    
+    # Ensure output directory exists
+    output_dir = os.path.dirname(output_path)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+        logger.info(f"Created output directory: {output_dir}")
+    
+    try:
+        # Prepare extra arguments for pypandoc
+        extra_args = []
+        
+        # Use template if provided for consistent styling and structure
+        if template_path:
+            if not os.path.exists(template_path):
+                logger.error(f"Template file not found: {template_path}")
+                raise FileNotFoundError(f"Template file not found: {template_path}")
+            
+            # Use reference document to preserve formatting, styles, and images
+            extra_args.extend(['--reference-doc', template_path])
+            logger.info(f"Using template for styling and image preservation: {template_path}")
+        
+        # Add resource path for images
+        if os.path.exists('media'):
+            extra_args.extend(['--resource-path', 'media'])
+            logger.info("Using media directory for image resources")
+        
+        # Convert HTML to DOCX
+        pypandoc.convert_text(
+            html_content,
+            'docx',
+            format='html',
+            outputfile=output_path,
+            extra_args=extra_args
+        )
+        
+        logger.info(f"HTML to DOCX conversion completed successfully: {output_path}")
+        logger.info("Images have been preserved in the output document")
+        
+    except Exception as e:
+        logger.error(f"HTML to DOCX conversion failed: {e}")
+        raise RuntimeError(f"HTML to DOCX conversion failed: {e}") from e
+
+def generate_output_filename(template_path: str, mapped_items: MappedItems) -> str:
+    """
+    Generate output filename by appending guest suffix and start date to template name.
+    
+    Args:
+        template_path (str): Path to the original template file
+        mapped_items (MappedItems): Configuration data
+        
+    Returns:
+        str: Generated output file path
+    """
+    # Get template path components
+    template_dir = os.path.dirname(template_path)
+    template_name = Path(template_path).stem
+    
+    # Create safe guest name for filename
+    safe_guest = "".join(c for c in mapped_items.guest if c.isalnum() or c in (' ', '-', '_')).strip()
+    safe_guest = safe_guest.replace(' ', '_')
+    
+    # Generate filename: template_name_guest_startdate.docx
+    filename = f"{template_name}_{safe_guest}_{mapped_items.start}.docx"
+    
+    return os.path.join(template_dir, filename)
+
 # Example usage
 if __name__ == "__main__":
     try:
         # Enforce existing JSON configuration file
         config_path = "data/config.json"
+        template_path = "data/template.docx"
+        
+        # Load configuration
         mapped_data = load_config(config_path)
 
-        # Convert DOCX to HTML
-        html_string = docx_to_html("data/template.docx")
+        # Convert DOCX to HTML (extracts images to media folder)
+        html_string = docx_to_html(template_path)
 
         # Replace placeholders
         final_html = replace_placeholders(html_string, mapped_data)
 
+        # Generate output filename with guest suffix and start date
+        output_path = generate_output_filename(template_path, mapped_data)
+        
+        # Convert processed HTML back to DOCX using original template as reference
+        html_to_docx(final_html, output_path, template_path)
+
         logger.info("Process completed successfully")
-        logger.info(final_html)  # For demonstration purposes
+        logger.info(f"Output file saved as: {output_path}")
 
     except FileNotFoundError as e:
         logger.error(f"Required file missing: {e}")
-        logger.error("Please create the configuration file before running the script")
+        logger.error("Please create the required files before running the script")
     except ValidationError as e:
         logger.error(f"Configuration validation failed: {e}")
     except Exception as e:
